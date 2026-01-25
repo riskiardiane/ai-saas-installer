@@ -1,151 +1,156 @@
-const axios = require('axios');
-const cheerio = require('cheerio');
+import axios from "axios"
+import * as cheerio from "cheerio"
 
-class TikTokDownloader {
-  constructor() {
-    this.apiUrl = 'https://myapi.app/api';
-    this.sitename = 'tikmate.cc';
-  }
+declare const proxy: () => string | null
 
-  async analyzeVideo(tiktokUrl) {
-    try {
-      const response = await axios.post(`${this.apiUrl}/analyze`, 
-        new URLSearchParams({
-          url: tiktokUrl,
-          sitename: this.sitename
-        }), {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-          }
-        }
-      );
-
-      const data = response.data;
-
-      if (data.error === true) {
-        throw new Error('Failed to analyze video');
-      }
-
-      let medias = data.medias.filter(media => media.quality !== 'watermark');
-
-      medias = medias.map(media => ({
-        ...media,
-        extension: media.extension?.toUpperCase() || 'MP4',
-        quality: this.formatQuality(media.quality)
-      }));
-
-      return {
-        id: data.id,
-        title: data.title,
-        author: data.author,
-        thumbnail: data.thumbnail,
-        duration: data.duration,
-        filename: data.filename,
-        medias: medias.reverse()
-      };
-
-    } catch (error) {
-      console.error('Error analyzing video:', error.message);
-      throw error;
-    }
-  }
-
-  formatQuality(quality) {
-    const qualityMap = {
-      'hd_no_watermark': '1080p',
-      'no_watermark': '720p',
-      'audio': '128kbps'
-    };
-    return qualityMap[quality] || quality;
-  }
-
-  async convertToMP3(videoUrl, videoId) {
-    try {
-      const response = await axios.post(`${this.apiUrl}/converter`, 
-        new URLSearchParams({
-          url: videoUrl,
-          id: videoId
-        }), {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-          }
-        }
-      );
-
-      const data = response.data;
-
-      if (data.error === false) {
-        return {
-          success: true,
-          downloadUrl: `${this.apiUrl}/downloader?id=${data.url}&site=${this.sitename}`
-        };
-      } else {
-        throw new Error('Conversion failed');
-      }
-
-    } catch (error) {
-      console.error('Error converting to MP3:', error.message);
-      throw error;
-    }
-  }
-
-  getDownloadUrl(mediaUrl) {
-    return `${this.apiUrl}/download?url=${encodeURIComponent(mediaUrl)}&sitename=${this.sitename}`;
-  }
-
-  async downloadVideo(mediaUrl, outputPath) {
-    const fs = require('fs');
-    const downloadUrl = this.getDownloadUrl(mediaUrl);
-
-    try {
-      const response = await axios({
-        method: 'GET',
-        url: downloadUrl,
-        responseType: 'stream'
-      });
-
-      const writer = fs.createWriteStream(outputPath);
-      response.data.pipe(writer);
-
-      return new Promise((resolve, reject) => {
-        writer.on('finish', resolve);
-        writer.on('error', reject);
-      });
-
-    } catch (error) {
-      console.error('Error downloading video:', error.message);
-      throw error;
-    }
-  }
-}
-
-/** jika butuh fungsi main nya ini ya
-async function main() {
-  const downloader = new TikTokDownloader();
-  const url = "https://vt.tiktok.com/ZSPrmoRNv/";
-
+async function tiktokStalk(user: string) {
   try {
-    const data = await downloader.analyzeVideo(url);
-
-    const result = {
-      id: data.id,
-      title: data.title,
-      author: data.author,
-      duration: data.duration,
-      thumbnail: data.thumbnail,
-      filename: data.filename,
-      medias: data.medias || []
-    };
-
-    console.log(JSON.stringify(result, null, 2));
-
-  } catch (err) {
-    console.log(JSON.stringify({
-      error: true,
-      message: err.message
-    }, null, 2));
+    const url = await axios.get(proxy() + `https://tiktok.com/@${user}`, {
+      headers: {
+        "User-Agent": "PostmanRuntime/7.32.2",
+      },
+      timeout: 30000,
+    })
+    const html = url.data
+    const $ = cheerio.load(html)
+    const data = $("#__UNIVERSAL_DATA_FOR_REHYDRATION__").text()
+    const result = JSON.parse(data)
+    if (result["__DEFAULT_SCOPE__"]["webapp.user-detail"].statusCode !== 0) {
+      throw new Error("User not found!")
+    }
+    return result["__DEFAULT_SCOPE__"]["webapp.user-detail"]["userInfo"]
+  } catch (err: any) {
+    throw new Error(`Error stalking TikTok user: ${err.message || err}`)
   }
 }
 
-main();
- */
+export default [
+  {
+    metode: "GET",
+    endpoint: "/api/stalk/tiktok",
+    name: "tiktok",
+    category: "Stalker",
+    description:
+      "This API endpoint allows you to retrieve public profile information for a specified TikTok user using their username as a query parameter. It fetches detailed user information, including statistics and other publicly available data. This is useful for applications requiring TikTok user data for display, analysis, or integration.",
+    tags: ["Stalker", "TikTok", "User", "Profile"],
+    example: "?username=mrbeast",
+    parameters: [
+      {
+        name: "username",
+        in: "query",
+        required: true,
+        schema: {
+          type: "string",
+          minLength: 1,
+          maxLength: 255,
+        },
+        description: "The TikTok username to stalk",
+        example: "mrbeast",
+      },
+    ],
+    isPremium: false,
+    isMaintenance: false,
+    isPublic: true,
+    async run({ req }) {
+      const { username } = req.query || {}
+
+      if (!username) {
+        return {
+          status: false,
+          error: "Username parameter is required",
+          code: 400,
+        }
+      }
+
+      if (typeof username !== "string" || username.trim().length === 0) {
+        return {
+          status: false,
+          error: "Username must be a non-empty string",
+          code: 400,
+        }
+      }
+
+      try {
+        const result = await tiktokStalk(username.trim())
+        return {
+          status: true,
+          data: result,
+          timestamp: new Date().toISOString(),
+        }
+      } catch (error: any) {
+        return {
+          status: false,
+          error: error.message || "Internal Server Error",
+          code: 500,
+        }
+      }
+    },
+  },
+  {
+    metode: "POST",
+    endpoint: "/api/stalk/tiktok",
+    name: "tiktok",
+    category: "Stalker",
+    description:
+      "This API endpoint allows you to retrieve public profile information for a specified TikTok user using their username in a JSON request body. It fetches detailed user information, including statistics and other publicly available data. This is useful for applications requiring TikTok user data for display, analysis, or integration.",
+    tags: ["Stalker", "TikTok", "User", "Profile"],
+    example: "",
+    requestBody: {
+      required: true,
+      content: {
+        "application/x-www-form-urlencoded": {
+          schema: {
+            type: "object",
+            required: ["username"],
+            properties: {
+              username: {
+                type: "string",
+                description: "The TikTok username to stalk",
+                example: "mrbeast",
+                minLength: 1,
+                maxLength: 255,
+              },
+            },
+          },
+        },
+      },
+    },
+    isPremium: false,
+    isMaintenance: false,
+    isPublic: true,
+    async run({ req }) {
+      const { username } = req.body || {}
+
+      if (!username) {
+        return {
+          status: false,
+          error: "Username parameter is required",
+          code: 400,
+        }
+      }
+
+      if (typeof username !== "string" || username.trim().length === 0) {
+        return {
+          status: false,
+          error: "Username must be a non-empty string",
+          code: 400,
+        }
+      }
+
+      try {
+        const result = await tiktokStalk(username.trim())
+        return {
+          status: true,
+          data: result,
+          timestamp: new Date().toISOString(),
+        }
+      } catch (error: any) {
+        return {
+          status: false,
+          error: error.message || "Internal Server Error",
+          code: 500,
+        }
+      }
+    },
+  },
+]
